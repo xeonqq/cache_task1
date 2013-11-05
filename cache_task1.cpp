@@ -38,26 +38,28 @@ using namespace std;
 
 static const int MEM_SIZE = 512;
 
+typedef	struct 
+{
+	sc_uint<1> index;
+	sc_uint<7> tag;
+	sc_int<8> data[32]; 
+} aca_cache_line;
+
+typedef	struct 
+{
+	aca_cache_line cache_line[128];
+} aca_cache_set; 
+
+typedef	struct
+{
+	aca_cache_set cache_set[8];
+} aca_cache;
+
 SC_MODULE(Cache) 
 {
 
 	public:
-		struct
-		{
-			sc_uint<1> index;
-			sc_uint<7> tag;
-			sc_int<byte> data[32]; 
-		} cache_line;
-
-		struct
-		{
-			cache_line[128];
-		} cache_set;
-
-		struct
-		{
-			cache_set[8];
-		} cache;
+		aca_cache cache;
 
 
 		enum Function 
@@ -105,8 +107,11 @@ SC_MODULE(Cache)
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
 				int data   = 0;
+				int index  = 0;
 				if (f == FUNC_WRITE) 
 				{
+					//determine whether a write hit
+					index = (addr & 0x0FE0) >> 5;	
 					cout << sc_time_stamp() << ": MEM received write" << endl;
 					data = Port_Data.read().to_int();
 				}
@@ -120,7 +125,7 @@ SC_MODULE(Cache)
 
 				if (f == FUNC_READ) 
 				{
-					Port_Data.write( (addr < MEM_SIZE) ? m_data[addr] : 0 );
+					//Port_Data.write( (addr < MEM_SIZE) ? m_data[addr] : 0 );
 					Port_Done.write( RET_READ_DONE );
 					wait();
 					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
@@ -129,7 +134,7 @@ SC_MODULE(Cache)
 				{
 					if (addr < MEM_SIZE) 
 					{
-						m_data[addr] = data;
+					//	m_data[addr] = data;
 					}
 					Port_Done.write( RET_WRITE_DONE );
 				}
@@ -142,8 +147,8 @@ SC_MODULE(CPU)
 
 	public:
 		sc_in<bool>                Port_CLK;
-		sc_in<Memory::RetCode>   Port_MemDone;
-		sc_out<Memory::Function> Port_MemFunc;
+		sc_in<Cache::RetCode>   Port_MemDone;
+		sc_out<Cache::Function> Port_MemFunc;
 		sc_out<int>                Port_MemAddr;
 		sc_inout_rv<32>            Port_MemData;
 
@@ -158,7 +163,7 @@ SC_MODULE(CPU)
 		void execute() 
 		{
 			TraceFile::Entry    tr_data;
-			Memory::Function  f;
+			Cache::Function  f;
 
 			// Loop until end of tracefile
 			while(!tracefile_ptr->eof())
@@ -178,7 +183,7 @@ SC_MODULE(CPU)
 				switch(tr_data.type)
 				{
 					case TraceFile::ENTRY_TYPE_READ:
-						f = Memory::FUNC_READ;
+						f = Cache::FUNC_READ;
 						if(j)
 							stats_readhit(0);
 						else
@@ -186,7 +191,7 @@ SC_MODULE(CPU)
 						break;
 
 					case TraceFile::ENTRY_TYPE_WRITE:
-						f = Memory::FUNC_WRITE;
+						f = Cache::FUNC_WRITE;
 						if(j)
 							stats_writehit(0);
 						else
@@ -206,7 +211,7 @@ SC_MODULE(CPU)
 					Port_MemAddr.write(tr_data.addr);
 					Port_MemFunc.write(f);
 
-					if (f == Memory::FUNC_WRITE) 
+					if (f == Cache::FUNC_WRITE) 
 					{
 						cout << sc_time_stamp() << ": CPU sends write" << endl;
 
@@ -222,7 +227,7 @@ SC_MODULE(CPU)
 
 					wait(Port_MemDone.value_changed_event());
 
-					if (f == Memory::FUNC_READ)
+					if (f == Cache::FUNC_READ)
 					{
 						cout << sc_time_stamp() << ": CPU reads: " << Port_MemData.read() << endl;
 					}
@@ -253,16 +258,16 @@ int sc_main(int argc, char* argv[])
 		stats_init();
 
 		// Instantiate Modules
-		Memory mem("main_memory");
+		Cache mem("main_memory");
 		CPU    cpu("cpu");
 
 		// Signals
-		sc_buffer<Memory::Function> sigMemFunc;
-		sc_buffer<Memory::RetCode>  sigMemDone;
+		sc_buffer<Cache::Function> sigMemFunc;
+		sc_buffer<Cache::RetCode>  sigMemDone;
 		sc_signal<int>              sigMemAddr;
 		sc_signal_rv<32>            sigMemData;
 
-		// The clock that will drive the CPU and Memory
+		// The clock that will drive the CPU and Cache
 		sc_clock clk;
 
 		// Connecting module ports with signals
