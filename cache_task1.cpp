@@ -38,29 +38,31 @@ using namespace std;
 
 static const int MEM_SIZE = 512;
 
+#define CACHE_SETS 8
+#define CACHE_LINES 128
+
+
 typedef	struct 
 {
-	sc_uint<1> index;
+	bool valid;
 	sc_uint<7> tag;
-	sc_int<8> data[32]; 
+	sc_int<8> data[32]; //32 byte line size 
 } aca_cache_line;
 
 typedef	struct 
 {
-	aca_cache_line cache_line[128];
+	aca_cache_line cache_line[CACHE_LINES];
 } aca_cache_set; 
 
 typedef	struct
 {
-	aca_cache_set cache_set[8];
+	aca_cache_set cache_set[CACHE_SETS];
 } aca_cache;
 
 SC_MODULE(Cache) 
 {
 
 	public:
-		aca_cache cache;
-
 
 		enum Function 
 		{
@@ -88,15 +90,17 @@ SC_MODULE(Cache)
 			dont_initialize();
 
 			//m_data = new int[MEM_SIZE];
+			cache = new aca_cache;
 		}
 
 		~Cache() 
 		{
 			//delete[] m_data;
+			delete cache;
+	
 		}
-
 	private:
-		//int* m_data;
+		aca_cache *cache;
 
 		void execute() 
 		{
@@ -107,11 +111,24 @@ SC_MODULE(Cache)
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
 				int data   = 0;
-				int index  = 0;
+				unsigned int index,tag  = 0;
+				bool hit   = false;
 				if (f == FUNC_WRITE) 
 				{
 					//determine whether a write hit
-					index = (addr & 0x0FE0) >> 5;	
+					index = (addr & 0x0FE0) >> 5;
+					tag = addr >> 12;
+					for ( int i=0; i <CACHE_SETS; i++ ){
+						aca_cache_line *c_line = &cache->cache_set[i].cache_line[index];
+						if (c_line -> valid == true && c_line -> tag == tag)
+							hit = true;
+					}
+					if (hit)
+						Port_Hit.write(true);
+					else
+						Port_Hit.write(false);
+
+
 					cout << sc_time_stamp() << ": MEM received write" << endl;
 					data = Port_Data.read().to_int();
 				}
@@ -134,7 +151,7 @@ SC_MODULE(Cache)
 				{
 					if (addr < MEM_SIZE) 
 					{
-					//	m_data[addr] = data;
+						//	m_data[addr] = data;
 					}
 					Port_Done.write( RET_WRITE_DONE );
 				}
