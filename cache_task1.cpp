@@ -176,6 +176,7 @@ SC_MODULE(Cache)
 							}
 						}
 					}
+					wait();	
 					Port_Done.write( RET_WRITE_DONE );
 					cout <<"write done" <<endl;
 
@@ -218,6 +219,7 @@ SC_MODULE(Cache)
 
 	
 					}
+					wait();
 					Port_Done.write( RET_READ_DONE );
 					wait();
 					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
