@@ -46,7 +46,8 @@ typedef	struct
 {
 	bool valid;
 	sc_uint<7> tag;
-	sc_int<8> data[32]; //32 byte line size 
+	//sc_int<8> data[32]; //32 byte line size 
+	int data[8]; //8 words = 32 byte line size 
 } aca_cache_line;
 
 typedef	struct 
@@ -110,34 +111,63 @@ SC_MODULE(Cache)
 
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
-				int data   = 0;
-				unsigned int index,tag  = 0;
+				//int *data;
+				unsigned int line_index,tag  = 0;
+				unsigned int word_index = 0;
 				bool hit   = false;
+				bool valid_lines[8];
+
 				if (f == FUNC_WRITE) 
 				{
-					//determine whether a write hit
-					index = (addr & 0x0FE0) >> 5;
-					tag = addr >> 12;
-					for ( int i=0; i <CACHE_SETS; i++ ){
-						aca_cache_line *c_line = &cache->cache_set[i].cache_line[index];
-						if (c_line -> valid == true && c_line -> tag == tag)
-							hit = true;
-					}
-					if (hit)
-						Port_Hit.write(true);
-					else
-						Port_Hit.write(false);
-
-
 					cout << sc_time_stamp() << ": MEM received write" << endl;
-					data = Port_Data.read().to_int();
+
+					//determine whether a write hit
+					line_index = (addr & 0x0FE0) >> 5;
+					tag = addr >> 12;
+					aca_cache_line *c_line;
+					word_index = ( addr & 0x001C ) >> 2;
+					for ( int i=0; i <CACHE_SETS; i++ ){
+						c_line = &(cache->cache_set[i].cache_line[line_index]);
+						if (c_line -> valid == true){
+							valid_lines[i] = true;	
+							if ( c_line -> tag == tag)
+								hit = true; 
+						}
+						else
+							hit = false;
+					}
+					if (hit){
+						Port_Hit.write(true);
+						c_line -> data[word_index] = Port_Data.read().to_int();
+					}
+					else
+					{		
+						Port_Hit.write(false);
+						// write allocate
+						for (int i = 0; i< 8; i++){
+							wait(100); //fetch 8 * words data from memory to cache
+							c_line -> data[i] = rand()%10000; //loading mem data to cache 					
+						}
+						for ( int i=0; i <CACHE_SETS; i++ ){
+							if (valid_lines[i] == false){
+								c_line = &(cache->cache_set[i].cache_line[line_index]);
+								c_line -> data[word_index] =  Port_Data.read().to_int();
+								c_line -> valid = true;
+								valid_lines[i] = true;
+								break;
+								
+							}
+						}
+					}
+					//cout << sc_time_stamp() << ": MEM received write" << endl;
+					//data = Port_Data.read().to_int();
 				}
 				else
 				{
 					cout << sc_time_stamp() << ": MEM received read" << endl;
 				}
 
-				// This simulates memory read/write delay
+				// This simulates memory read/write delayc
 				wait(99);
 
 				if (f == FUNC_READ) 
