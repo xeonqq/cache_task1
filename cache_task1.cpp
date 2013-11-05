@@ -98,7 +98,7 @@ SC_MODULE(Cache)
 		{
 			//delete[] m_data;
 			delete cache;
-	
+
 		}
 	private:
 		aca_cache *cache;
@@ -107,8 +107,11 @@ SC_MODULE(Cache)
 		{
 			while (true)
 			{
+
+						cout << "here"<<endl;
 				wait(Port_Func.value_changed_event());
 
+						cout << "here2"<<endl;
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
 				//int *data;
@@ -144,7 +147,7 @@ SC_MODULE(Cache)
 						stats_writehit(0);
 						c_line -> data[word_index] = Port_Data.read().to_int();
 						cout << sc_time_stamp() << ": Cache write hit!" << endl;
-
+						//sth need to do with lru
 					}
 					else //write miss
 					{		
@@ -164,22 +167,63 @@ SC_MODULE(Cache)
 								c_line -> valid = true;
 								c_line -> tag = tag;
 								break;
-								
+
 							}
 							else if(i == CACHE_SETS-1){// all lines are valid
 								//lru
+								//write back the previous line to mem and replace the lru line 
 
 							}
 						}
 					}
+					Port_Done.write( RET_WRITE_DONE );
+					cout <<"write done" <<endl;
+
 					//cout << sc_time_stamp() << ": MEM received write" << endl;
 					//data = Port_Data.read().to_int();
 				}
-				else
+				else//a read comes to cache
 				{
 					cout << sc_time_stamp() << ": MEM received read" << endl;
-				}
+					line_index = (addr & 0x0FE0) >> 5;
+					tag = addr >> 12;
+					cout << "line_index: " << line_index <<  "tag: " <<tag << endl;
+					aca_cache_line *c_line;
+					word_index = ( addr & 0x001C ) >> 2;
+					for ( int i=0; i <CACHE_SETS; i++ ){
+						c_line = &(cache->cache_set[i].cache_line[line_index]);
+						if (c_line -> valid == true){
+							valid_lines[i] = true;	
+							if ( c_line -> tag == tag)
+								hit = true; 
 
+							else{
+								hit = false;
+								valid_lines[i] = false;
+							}
+						}
+					}
+					if (hit){ //read hit
+						Port_Hit.write(true);
+						stats_readhit(0);
+						Port_Data.write( c_line -> data[word_index] );
+						cout << sc_time_stamp() << ": Cache read hit!" << endl;
+						//some lru stuff needed to be done
+					}
+					else //read miss
+					{
+						Port_Hit.write(false);
+						stats_readmiss(0);
+						cout << sc_time_stamp() << ": Cache read miss!" << endl;
+
+	
+					}
+					Port_Done.write( RET_READ_DONE );
+					wait();
+					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
+
+				}
+				/*
 				// This simulates memory read/write delayc
 				wait(99);
 
@@ -198,6 +242,7 @@ SC_MODULE(Cache)
 					}
 					Port_Done.write( RET_WRITE_DONE );
 				}
+				 */
 			}
 		}
 }; 
@@ -238,25 +283,27 @@ SC_MODULE(CPU)
 				// To demonstrate the statistic functions, we generate a 50%
 				// probability of a 'hit' or 'miss', and call the statistic
 				// functions below
-				int j = rand()%2;
+				//int j = rand()%2;
 
 				switch(tr_data.type)
 				{
 					case TraceFile::ENTRY_TYPE_READ:
 						f = Cache::FUNC_READ;
+						/*
 						if(j)
 							stats_readhit(0);
 						else
 							stats_readmiss(0);
+						*/
 						break;
 
 					case TraceFile::ENTRY_TYPE_WRITE:
 						f = Cache::FUNC_WRITE;
 						/*
-						if(j)
-							stats_writehit(0);
-						else
-							stats_writemiss(0);
+						   if(j)
+						   stats_writehit(0);
+						   else
+						   stats_writemiss(0);
 						 */						
 						break;
 
