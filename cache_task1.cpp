@@ -115,7 +115,7 @@ SC_MODULE(Cache)
 				unsigned int line_index,tag  = 0;
 				unsigned int word_index = 0;
 				bool hit   = false;
-				bool valid_lines[8];
+				bool valid_lines[8] = {false};
 
 				if (f == FUNC_WRITE) 
 				{
@@ -124,6 +124,7 @@ SC_MODULE(Cache)
 					//determine whether a write hit
 					line_index = (addr & 0x0FE0) >> 5;
 					tag = addr >> 12;
+					cout << "line_index: " << line_index <<  "tag: " <<tag << endl;
 					aca_cache_line *c_line;
 					word_index = ( addr & 0x001C ) >> 2;
 					for ( int i=0; i <CACHE_SETS; i++ ){
@@ -133,29 +134,41 @@ SC_MODULE(Cache)
 							if ( c_line -> tag == tag)
 								hit = true; 
 						}
-						else
+						else{
 							hit = false;
+							valid_lines[i] = false;
+						}
 					}
-					if (hit){
+					if (hit){ //write hit
 						Port_Hit.write(true);
+						stats_writehit(0);
 						c_line -> data[word_index] = Port_Data.read().to_int();
+						cout << sc_time_stamp() << ": Cache write hit!" << endl;
+
 					}
-					else
+					else //write miss
 					{		
 						Port_Hit.write(false);
+						stats_writemiss(0);
+						cout << sc_time_stamp() << ": Cache write miss!" << endl;
+
 						// write allocate
 						for (int i = 0; i< 8; i++){
 							wait(100); //fetch 8 * words data from memory to cache
 							c_line -> data[i] = rand()%10000; //loading mem data to cache 					
 						}
 						for ( int i=0; i <CACHE_SETS; i++ ){
-							if (valid_lines[i] == false){
+							if (valid_lines[i] == false){ //use an invalid line
 								c_line = &(cache->cache_set[i].cache_line[line_index]);
 								c_line -> data[word_index] =  Port_Data.read().to_int();
 								c_line -> valid = true;
-								valid_lines[i] = true;
+								c_line -> tag = tag;
 								break;
 								
+							}
+							else if(i == CACHE_SETS-1){// all lines are valid
+								//lru
+
 							}
 						}
 					}
@@ -239,10 +252,12 @@ SC_MODULE(CPU)
 
 					case TraceFile::ENTRY_TYPE_WRITE:
 						f = Cache::FUNC_WRITE;
+						/*
 						if(j)
 							stats_writehit(0);
 						else
 							stats_writemiss(0);
+						 */						
 						break;
 
 					case TraceFile::ENTRY_TYPE_NOP:
@@ -313,7 +328,7 @@ int sc_main(int argc, char* argv[])
 		sc_buffer<Cache::RetCode>  sigMemDone;
 		sc_signal<int>              sigMemAddr;
 		sc_signal_rv<32>            sigMemData;
-
+		sc_signal<bool> 	sigMemHit;
 		// The clock that will drive the CPU and Cache
 		sc_clock clk;
 
@@ -322,6 +337,7 @@ int sc_main(int argc, char* argv[])
 		mem.Port_Addr(sigMemAddr);
 		mem.Port_Data(sigMemData);
 		mem.Port_Done(sigMemDone);
+		mem.Port_Hit(sigMemHit);
 
 		cpu.Port_MemFunc(sigMemFunc);
 		cpu.Port_MemAddr(sigMemAddr);
