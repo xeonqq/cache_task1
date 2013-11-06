@@ -83,6 +83,7 @@ SC_MODULE(Cache)
 		sc_out<RetCode> Port_Done;
 		sc_inout_rv<32> Port_Data;
 		sc_out<bool> 	Port_Hit;
+		sc_out<bool>     Port_Check;
 
 		SC_CTOR(Cache) 
 		{
@@ -108,10 +109,10 @@ SC_MODULE(Cache)
 			while (true)
 			{
 
-						cout << "here"<<endl;
+				cout << "here"<<endl;
 				wait(Port_Func.value_changed_event());
 
-						cout << "here2"<<endl;
+				cout << "here2"<<endl;
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
 				//int *data;
@@ -119,7 +120,7 @@ SC_MODULE(Cache)
 				unsigned int word_index = 0;
 				bool hit   = false;
 				bool valid_lines[8] = {false};
-
+				int load_buffer[8];
 				if (f == FUNC_WRITE) 
 				{
 					cout << sc_time_stamp() << ": MEM received write" << endl;
@@ -145,6 +146,7 @@ SC_MODULE(Cache)
 					if (hit){ //write hit
 						Port_Hit.write(true);
 						stats_writehit(0);
+						//wait();//consume 1 cycle
 						c_line -> data[word_index] = Port_Data.read().to_int();
 						cout << sc_time_stamp() << ": Cache write hit!" << endl;
 						//sth need to do with lru
@@ -158,12 +160,14 @@ SC_MODULE(Cache)
 						// write allocate
 						for (int i = 0; i< 8; i++){
 							wait(100); //fetch 8 * words data from memory to cache
-							c_line -> data[i] = rand()%10000; //loading mem data to cache 					
+							load_buffer[i] = rand()%10000; //loading mem data to cache 					
 						}
 						for ( int i=0; i <CACHE_SETS; i++ ){
 							if (valid_lines[i] == false){ //use an invalid line
 								c_line = &(cache->cache_set[i].cache_line[line_index]);
-								c_line -> data[word_index] =  Port_Data.read().to_int();
+								for (int i = 0; i< 8; i++)
+									c_line -> data[i] = load_buffer[i]; //load the memory line(32bytes) to the appropriate cache line
+								c_line -> data[word_index] =  Port_Data.read().to_int(); //actual write from processor to cache line
 								c_line -> valid = true;
 								c_line -> tag = tag;
 								break;
@@ -176,8 +180,8 @@ SC_MODULE(Cache)
 							}
 						}
 					}
-					wait();	
 					Port_Done.write( RET_WRITE_DONE );
+					Port_Check.write ( RET_WRITE_DONE );
 					cout <<"write done" <<endl;
 
 					//cout << sc_time_stamp() << ": MEM received write" << endl;
@@ -215,15 +219,38 @@ SC_MODULE(Cache)
 					{
 						Port_Hit.write(false);
 						stats_readmiss(0);
-						cout << sc_time_stamp() << ": Cache read miss!" << endl;
 
-	
+						cout << sc_time_stamp() << ": Cache read miss!" << endl;
+						// write allocate
+						for (int i = 0; i< 8; i++){
+							wait(100); //fetch 8 * words data from memory to cache
+							load_buffer[i] = rand()%10000; //loading mem data to cache 					
+						}
+						for ( int i=0; i <CACHE_SETS; i++ ){
+							if (valid_lines[i] == false){ //use an invalid line
+								c_line = &(cache->cache_set[i].cache_line[line_index]);
+								for (int i = 0; i< 8; i++)
+									c_line -> data[i] = load_buffer[i]; //load the memory line(32bytes) to the appropriate cache line
+								Port_Data.write(c_line -> data[word_index]);  
+								c_line -> valid = true;
+								c_line -> tag = tag;
+								break;
+
+							}
+							else if(i == CACHE_SETS-1){// all lines are valid
+								//lru
+								//write back the previous line to mem and replace the lru line 
+
+							}
+						}
+
+
 					}
-					wait();
+					//wait();
 					Port_Done.write( RET_READ_DONE );
+					Port_Check.write ( RET_READ_DONE );
 					wait();
 					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
-
 				}
 				/*
 				// This simulates memory read/write delayc
@@ -231,18 +258,18 @@ SC_MODULE(Cache)
 
 				if (f == FUNC_READ) 
 				{
-					//Port_Data.write( (addr < MEM_SIZE) ? m_data[addr] : 0 );
-					Port_Done.write( RET_READ_DONE );
-					wait();
-					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
+				//Port_Data.write( (addr < MEM_SIZE) ? m_data[addr] : 0 );
+				Port_Done.write( RET_READ_DONE );
+				wait();
+				Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
 				}
 				else
 				{
-					if (addr < MEM_SIZE) 
-					{
-						//	m_data[addr] = data;
-					}
-					Port_Done.write( RET_WRITE_DONE );
+				if (addr < MEM_SIZE) 
+				{
+				//	m_data[addr] = data;
+				}
+				Port_Done.write( RET_WRITE_DONE );
 				}
 				 */
 			}
@@ -292,11 +319,11 @@ SC_MODULE(CPU)
 					case TraceFile::ENTRY_TYPE_READ:
 						f = Cache::FUNC_READ;
 						/*
-						if(j)
-							stats_readhit(0);
-						else
-							stats_readmiss(0);
-						*/
+						   if(j)
+						   stats_readhit(0);
+						   else
+						   stats_readmiss(0);
+						 */
 						break;
 
 					case TraceFile::ENTRY_TYPE_WRITE:
@@ -378,6 +405,8 @@ int sc_main(int argc, char* argv[])
 		sc_signal<int>              sigMemAddr;
 		sc_signal_rv<32>            sigMemData;
 		sc_signal<bool> 	sigMemHit;
+		sc_signal<bool>              sigMemCheck;
+
 		// The clock that will drive the CPU and Cache
 		sc_clock clk;
 
@@ -387,6 +416,7 @@ int sc_main(int argc, char* argv[])
 		mem.Port_Data(sigMemData);
 		mem.Port_Done(sigMemDone);
 		mem.Port_Hit(sigMemHit);
+		mem.Port_Check(sigMemCheck);
 
 		cpu.Port_MemFunc(sigMemFunc);
 		cpu.Port_MemAddr(sigMemAddr);
@@ -398,9 +428,20 @@ int sc_main(int argc, char* argv[])
 
 		cout << "Running (press CTRL+C to interrupt)... " << endl;
 
+		sc_trace_file *wf = sc_create_vcd_trace_file("CPU_MEM");
+		// Dump the desired signals
+		sc_trace(wf, clk, "clock");
+		sc_trace(wf, sigMemFunc, "wr");//does not showup
+		sc_trace(wf, sigMemDone, "ret");//does not showup
+		sc_trace(wf, sigMemAddr, "addr");
+		sc_trace(wf, sigMemData, "data");
+		sc_trace(wf, sigMemCheck, "check");
+
 
 		// Start Simulation
-		sc_start();
+		sc_start(20000,SC_NS);
+		//sc_start();
+
 
 		// Print statistics after simulation finished
 		stats_print();
