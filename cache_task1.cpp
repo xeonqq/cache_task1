@@ -36,7 +36,7 @@
 
 using namespace std;
 
-static const int MEM_SIZE = 512;
+//static const int MEM_SIZE = 512;
 
 #define CACHE_SETS 8
 #define CACHE_LINES 128
@@ -145,6 +145,7 @@ SC_MODULE(Cache)
 								hit = true;
 								hit_set=i; 
 							}
+							
 						}
 						else{
 							hit = false;
@@ -154,6 +155,8 @@ SC_MODULE(Cache)
 					if (hit){ //write hit
 						Port_Hit.write(true);
 						stats_writehit(0);
+						c_line = &(cache->cache_set[hit_set].cache_line[line_index]);
+						
 						c_line -> data[word_index] = cpu_data;
 						wait();//consume 1 cycle
 						cout << sc_time_stamp() << ": Cache write hit!" << endl;
@@ -246,6 +249,7 @@ SC_MODULE(Cache)
 									c_line = &(cache->cache_set[7].cache_line[line_index]);
 									set_index_toreplace = 7;
 								}
+								cout<< "Replacing now the cache line in set ....." << set_index_toreplace << endl;
 
 								// write allocate
 								for (int i = 0; i< 8; i++){
@@ -254,7 +258,7 @@ SC_MODULE(Cache)
 								}
 								
 								// Replace the word in the cache line and make it valid
-								c_line -> data[word_index] =  Port_Data.read().to_int(); //actual write from processor to cache line
+								c_line -> data[word_index] =  cpu_data; //actual write from processor to cache line
 								c_line -> valid = true;
 								c_line -> tag = tag;
 								switch (set_index_toreplace)
@@ -307,12 +311,16 @@ SC_MODULE(Cache)
 					if (hit){ //read hit
 						Port_Hit.write(true);
 						stats_readhit(0);
+						c_line = &(cache->cache_set[hit_set].cache_line[line_index]);
+						
 						Port_Data.write( c_line -> data[word_index] );
 						cout << sc_time_stamp() << ": Cache read hit!" << endl;
 						//some lru stuff needed to be done
 						switch (hit_set)
 						{
-							case 0: lru_table |=0b1101000; break;
+							case 0: lru_table |=0b1101000; 
+							cout << "lru 0 = " << (int) lru_table<< endl;
+							break;
 							case 1: lru_table = (lru_table & 0b0010111) | 0b1100000;break;
 							case 2: lru_table = (lru_table & 0b0011011) | 0b1000100;break;
 							case 3: lru_table = (lru_table & 0b0011011) | 0b1000000;break;
@@ -625,7 +633,7 @@ int sc_main(int argc, char* argv[])
 
 
 		// Start Simulation
-		sc_start(2000000,SC_NS);
+		sc_start(20000000,SC_NS);
 		//sc_start();
 
 
