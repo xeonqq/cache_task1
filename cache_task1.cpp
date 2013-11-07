@@ -28,7 +28,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 //
- */
+  */
 
 #include "aca2009.h"
 #include <systemc.h>
@@ -45,7 +45,7 @@ static const int MEM_SIZE = 512;
 typedef	struct 
 {
 	bool valid;
-	sc_uint<7> tag;
+	sc_uint<20> tag;
 	//sc_int<8> data[32]; //32 byte line size 
 	int data[8]; //8 words = 32 byte line size 
 } aca_cache_line;
@@ -93,6 +93,9 @@ SC_MODULE(Cache)
 
 			//m_data = new int[MEM_SIZE];
 			cache = new aca_cache;
+			lru_table=0;
+			for (int i = 0; i<8; i++)
+				valid_lines[i] = false;
 		}
 
 		~Cache() 
@@ -103,30 +106,34 @@ SC_MODULE(Cache)
 		}
 	private:
 		aca_cache *cache;
-
+		unsigned char lru_table;
+		bool valid_lines[8];
 		void execute() 
 		{
 			while (true)
 			{
-
-				cout << "here"<<endl;
+				//cout<<"waiting for wr function"<<endl;
 				wait(Port_Func.value_changed_event());
+				//cout<<"get wr function"<<endl;
 
-				cout << "here2"<<endl;
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
 				//int *data;
-				unsigned int line_index,tag  = 0;
+				sc_uint<20> tag = 0;
+				unsigned int line_index;
 				unsigned int word_index = 0;
 				bool hit   = false;
-				bool valid_lines[8] = {false};
 				int load_buffer[8];
+				int hit_set = -1;
+
+				//cout << sc_time_stamp() << " Function is " << f << endl;
 				if (f == FUNC_WRITE) 
 				{
-					cout << sc_time_stamp() << ": MEM received write" << endl;
+					int cpu_data = Port_Data.read().to_int();
 
+					cout << sc_time_stamp() << ": MEM received write" << endl;
 					//determine whether a write hit
-					line_index = (addr & 0x0FE0) >> 5;
+					line_index = (addr & 0x00000FE0) >> 5;
 					tag = addr >> 12;
 					cout << "line_index: " << line_index <<  "tag: " <<tag << endl;
 					aca_cache_line *c_line;
@@ -135,8 +142,10 @@ SC_MODULE(Cache)
 						c_line = &(cache->cache_set[i].cache_line[line_index]);
 						if (c_line -> valid == true){
 							valid_lines[i] = true;	
-							if ( c_line -> tag == tag)
-								hit = true; 
+							if ( c_line -> tag == tag){
+								hit = true;
+								hit_set=i; 
+							}
 						}
 						else{
 							hit = false;
@@ -146,10 +155,23 @@ SC_MODULE(Cache)
 					if (hit){ //write hit
 						Port_Hit.write(true);
 						stats_writehit(0);
-						//wait();//consume 1 cycle
-						c_line -> data[word_index] = Port_Data.read().to_int();
+						c_line -> data[word_index] = cpu_data;
+						wait();//consume 1 cycle
 						cout << sc_time_stamp() << ": Cache write hit!" << endl;
 						//sth need to do with lru
+						switch (hit_set)
+						{
+							case 0: lru_table |=0b1101000; break;
+							case 1: lru_table = (lru_table & 0b0010111) | 0b1100000;break;
+							case 2: lru_table = (lru_table & 0b0011011) | 0b1000100;break;
+							case 3: lru_table = (lru_table & 0b0011011) | 0b1000000;break;
+							case 4: lru_table = (lru_table & 0b0101101) | 0b0010010;break;
+							case 5: lru_table = (lru_table & 0b0101101) | 0b0010000;break;
+							case 6: lru_table = (lru_table & 0b0101110) | 0b0000001;break;
+							case 7: lru_table = (lru_table & 0b0101110);break;
+							default: cout << "Damn here !!!!" << endl;
+
+						}
 					}
 					else //write miss
 					{		
@@ -157,27 +179,100 @@ SC_MODULE(Cache)
 						stats_writemiss(0);
 						cout << sc_time_stamp() << ": Cache write miss!" << endl;
 
-						// write allocate
-						for (int i = 0; i< 8; i++){
-							wait(100); //fetch 8 * words data from memory to cache
-							load_buffer[i] = rand()%10000; //loading mem data to cache 					
-						}
 						for ( int i=0; i <CACHE_SETS; i++ ){
 							if (valid_lines[i] == false){ //use an invalid line
+								// write allocate
 								c_line = &(cache->cache_set[i].cache_line[line_index]);
-								for (int i = 0; i< 8; i++)
-									c_line -> data[i] = load_buffer[i]; //load the memory line(32bytes) to the appropriate cache line
-								c_line -> data[word_index] =  Port_Data.read().to_int(); //actual write from processor to cache line
+								for (int j = 0; j < 8; j++)
+								{
+									wait(100); //fetch 8 * words data from memory to cache
+									c_line -> data[j] = rand()%10000; //load the memory line(32bytes) to the appropriate cache line
+								}
+								c_line -> data[word_index] = cpu_data; //actual write from processor to cache line
 								c_line -> valid = true;
 								c_line -> tag = tag;
+								//update the lru table after the cache update
+								switch (i)
+								{
+									case 0: lru_table |=0b1101000; break;
+									case 1: lru_table = (lru_table & 0b0010111) | 0b1100000;break;
+									case 2: lru_table = (lru_table & 0b0011011) | 0b1000100;break;
+									case 3: lru_table = (lru_table & 0b0011011) | 0b1000000;break;
+									case 4: lru_table = (lru_table & 0b0101101) | 0b0010010;break;
+									case 5: lru_table = (lru_table & 0b0101101) | 0b0010000;break;
+									case 6: lru_table = (lru_table & 0b0101110) | 0b0000001;break;
+									case 7: lru_table = (lru_table & 0b0101110);break;
+
+								}
 								break;
 
 							}
+#if 1
 							else if(i == CACHE_SETS-1){// all lines are valid
 								//lru
 								//write back the previous line to mem and replace the lru line 
+								int set_index_toreplace = 8;
+								for(int i=0; i<8;i++)//write the cache line back to the memory
+									wait(100);
 
+								if ( (lru_table & 0b1101000) == 0 ){ //find the cache line to replace
+									c_line = &(cache->cache_set[0].cache_line[line_index]);
+									set_index_toreplace = 0;
+								}
+								else if ( (lru_table & 0b1101000) == 0b0001000 ) {
+									c_line = &(cache->cache_set[1].cache_line[line_index]);
+									set_index_toreplace = 1;
+								}
+								else if ( (lru_table & 0b1100100) == 0b0100000 ) {
+									c_line = &(cache->cache_set[2].cache_line[line_index]);
+									set_index_toreplace = 2;
+								}
+								else if ( (lru_table & 0b1100100) == 0b0100100 ) {
+									c_line = &(cache->cache_set[3].cache_line[line_index]);
+									set_index_toreplace = 3;
+								}
+								else if ( (lru_table & 0b1010010) == 0b1000000 ) {
+									c_line = &(cache->cache_set[4].cache_line[line_index]);
+									set_index_toreplace = 4;
+								}
+								else if ( (lru_table & 0b1010010) == 0b1000010 ) {
+									c_line = &(cache->cache_set[5].cache_line[line_index]);
+									set_index_toreplace = 5;
+								}
+								else if ( (lru_table & 0b1010001) == 0b1010000 ) {
+									c_line = &(cache->cache_set[6].cache_line[line_index]);
+									set_index_toreplace = 6;
+								}
+								else if ( (lru_table & 0b1010001) == 0b1010001 ) {
+									c_line = &(cache->cache_set[7].cache_line[line_index]);
+									set_index_toreplace = 7;
+								}
+
+								// write allocate
+								for (int i = 0; i< 8; i++){
+									wait(100); //fetch 8 * words data from memory to cache
+									c_line -> data[i] = rand()%10000; //load the memory line(32bytes) to the appropriate cache line
+								}
+								
+								// Replace the word in the cache line and make it valid
+								c_line -> data[word_index] =  Port_Data.read().to_int(); //actual write from processor to cache line
+								c_line -> valid = true;
+								c_line -> tag = tag;
+								switch (set_index_toreplace)
+								{
+									case 0: lru_table |=0b1101000; break;
+									case 1: lru_table = (lru_table & 0b0010111) | 0b1100000;break;
+									case 2: lru_table = (lru_table & 0b0011011) | 0b1000100;break;
+									case 3: lru_table = (lru_table & 0b0011011) | 0b1000000;break;
+									case 4: lru_table = (lru_table & 0b0101101) | 0b0010010;break;
+									case 5: lru_table = (lru_table & 0b0101101) | 0b0010000;break;
+									case 6: lru_table = (lru_table & 0b0101110) | 0b0000001;break;
+									case 7: lru_table = (lru_table & 0b0101110);break;
+									default: cout << "Buggy here !!!!! should not come here" <<endl; 
+
+								}	
 							}
+#endif
 						}
 					}
 					Port_Done.write( RET_WRITE_DONE );
@@ -199,8 +294,10 @@ SC_MODULE(Cache)
 						c_line = &(cache->cache_set[i].cache_line[line_index]);
 						if (c_line -> valid == true){
 							valid_lines[i] = true;	
-							if ( c_line -> tag == tag)
+							if ( c_line -> tag == tag){
 								hit = true; 
+								hit_set=i; 
+							}
 
 							else{
 								hit = false;
@@ -247,8 +344,8 @@ SC_MODULE(Cache)
 
 					}
 					//wait();
-					Port_Done.write( RET_READ_DONE );
 					Port_Check.write ( RET_READ_DONE );
+					Port_Done.write( RET_READ_DONE );
 					wait();
 					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
 				}
@@ -347,23 +444,25 @@ SC_MODULE(CPU)
 				if(tr_data.type != TraceFile::ENTRY_TYPE_NOP)
 				{
 					Port_MemAddr.write(tr_data.addr);
-					Port_MemFunc.write(f);
 
+					Port_MemFunc.write(f);
+					cout<<"cpu issuing a function: " << f <<endl;
 					if (f == Cache::FUNC_WRITE) 
 					{
 						cout << sc_time_stamp() << ": CPU sends write" << endl;
 
 						uint32_t data = rand();
 						Port_MemData.write(data);
-						wait();
+						wait(); //this waiting for 1 cycle is mapping to the one cycle wait in the cache write hit.
 						Port_MemData.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
 					}
 					else
 					{
 						cout << sc_time_stamp() << ": CPU sends read" << endl;
 					}
-
+					//cout <<"CPU: "<<"waiting for cache response" <<endl;
 					wait(Port_MemDone.value_changed_event());
+					//cout <<"CPU: "<<"get cache response" <<endl;
 
 					if (f == Cache::FUNC_READ)
 					{
@@ -439,7 +538,7 @@ int sc_main(int argc, char* argv[])
 
 
 		// Start Simulation
-		sc_start(20000,SC_NS);
+		sc_start(2000000,SC_NS);
 		//sc_start();
 
 
