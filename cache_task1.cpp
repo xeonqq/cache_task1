@@ -84,7 +84,10 @@ SC_MODULE(Cache)
 		sc_out<RetCode> Port_Done;
 		sc_inout_rv<32> Port_Data;
 		sc_out<bool> 	Port_Hit;
-		sc_out<bool>     Port_Check;
+		sc_out<bool>     Port_Wr_Done;
+		sc_out<bool>     Port_Wr_Func;
+		sc_out<int> 	Port_Hit_Line;
+		sc_out<int> 	Port_Replace_Line;
 
 		SC_CTOR(Cache) 
 		{
@@ -135,6 +138,7 @@ SC_MODULE(Cache)
 
 				Function f = Port_Func.read();
 				int addr   = Port_Addr.read();
+				Port_Wr_Func.write(f);
 				//int *data;
 				aca_cache_line *c_line;
 				sc_uint<20> tag = 0;
@@ -181,6 +185,7 @@ SC_MODULE(Cache)
 					cout << sc_time_stamp() << ": MEM received write" << endl;
 					if (hit){ //write hit
 						Port_Hit.write(true);
+						Port_Hit_Line.write(hit_set);
 						stats_writehit(0);
 						c_line = &(cache->cache_set[hit_set].cache_line[line_index]);
 
@@ -278,6 +283,8 @@ SC_MODULE(Cache)
 								}
 								cout<< "Replacing now the cache line in set ....." << set_index_toreplace << endl;
 
+								Port_Replace_Line.write(set_index_toreplace);
+
 								for(int i=0; i<8;i++)//write the cache line back to the memory
 									wait(100);
 
@@ -310,7 +317,7 @@ SC_MODULE(Cache)
 						}
 					}
 					Port_Done.write( RET_WRITE_DONE );
-					Port_Check.write ( RET_WRITE_DONE );
+					Port_Wr_Done.write ( RET_WRITE_DONE );
 
 					//cout << sc_time_stamp() << ": MEM received write" << endl;
 					//data = Port_Data.read().to_int();
@@ -321,6 +328,7 @@ SC_MODULE(Cache)
 
 					if (hit){ //read hit
 						Port_Hit.write(true);
+						Port_Hit_Line.write(hit_set);
 						stats_readhit(0);
 						c_line = &(cache->cache_set[hit_set].cache_line[line_index]);
 
@@ -410,7 +418,8 @@ SC_MODULE(Cache)
 									c_line = &(cache->cache_set[7].cache_line[line_index]);
 									set_index_toreplace = 7;
 								}
-
+								Port_Replace_Line.write(set_index_toreplace);
+	
 								//write back the previous line to mem 
 								for(int i=0; i<8;i++)//write the cache line back to the memory
 									wait(100);
@@ -447,7 +456,7 @@ SC_MODULE(Cache)
 
 
 					//wait();
-					Port_Check.write ( RET_READ_DONE );
+					Port_Wr_Done.write ( RET_READ_DONE );
 					Port_Done.write( RET_READ_DONE );
 					wait();
 					Port_Data.write("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
@@ -619,8 +628,10 @@ int sc_main(int argc, char* argv[])
 		sc_signal<int>              sigMemAddr;
 		sc_signal_rv<32>            sigMemData;
 		sc_signal<bool> 	sigMemHit;
-		sc_signal<bool>              sigMemCheck;
-
+		sc_signal<bool>              sigMemWr_Done;
+		sc_signal<bool>              sigMemWr_Func;
+		sc_signal<int>              sigMemHitLine;
+		sc_signal<int>              sigMemReplaceLine;
 		// The clock that will drive the CPU and Cache
 		sc_clock clk;
 
@@ -630,7 +641,10 @@ int sc_main(int argc, char* argv[])
 		mem.Port_Data(sigMemData);
 		mem.Port_Done(sigMemDone);
 		mem.Port_Hit(sigMemHit);
-		mem.Port_Check(sigMemCheck);
+		mem.Port_Wr_Done(sigMemWr_Done);
+		mem.Port_Wr_Func(sigMemWr_Func);
+		mem.Port_Hit_Line(sigMemHitLine);
+		mem.Port_Replace_Line(sigMemReplaceLine);
 
 		cpu.Port_MemFunc(sigMemFunc);
 		cpu.Port_MemAddr(sigMemAddr);
@@ -645,16 +659,20 @@ int sc_main(int argc, char* argv[])
 		sc_trace_file *wf = sc_create_vcd_trace_file("CPU_MEM");
 		// Dump the desired signals
 		sc_trace(wf, clk, "clock");
-		sc_trace(wf, sigMemFunc, "wr");//does not showup
-		sc_trace(wf, sigMemDone, "ret");//does not showup
+		//sc_trace(wf, sigMemFunc, "wr");//does not showup
+		//sc_trace(wf, sigMemDone, "ret");//does not showup
 		sc_trace(wf, sigMemAddr, "addr");
 		sc_trace(wf, sigMemData, "data");
-		sc_trace(wf, sigMemCheck, "check");
+		//sc_trace(wf, sigMemWr_Done, "wr_done");
+		sc_trace(wf, sigMemWr_Func, "wr_func");
+		sc_trace(wf, sigMemHit, "Hit");
+		sc_trace(wf, sigMemHitLine, "Hit_line");
+		sc_trace(wf, sigMemReplaceLine, "replace_line");
 
 
 		// Start Simulation
-		//sc_start(10000000,SC_NS);
-		sc_start();
+		sc_start(2000000,SC_NS);
+		//sc_start();
 
 
 		// Print statistics after simulation finished
